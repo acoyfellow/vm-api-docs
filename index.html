@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VM API - Human Language Docs</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    h1 {
+      color: #fff;
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1rem;
+    }
+    h1 span { color: var(--accent); }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin-bottom: 2rem;
+    }
+    h2 {
+      color: #fff;
+      font-size: 1.5rem;
+      margin-top: 3rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    h3 {
+      color: var(--accent);
+      font-size: 1.1rem;
+      margin-top: 1.5rem;
+    }
+    p { margin: 1rem 0; }
+    code {
+      background: var(--surface);
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: 'SF Mono', Consolas, monospace;
+    }
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+      position: relative;
+    }
+    pre code {
+      background: none;
+      padding: 0;
+      font-size: 0.85rem;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: var(--border);
+      border: none;
+      color: var(--text-muted);
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .copy-btn:hover { background: var(--accent); color: #fff; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+    }
+    .card h3 { margin-top: 0; }
+    .badge {
+      display: inline-block;
+      padding: 0.2em 0.6em;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-tool { background: var(--accent); color: #000; }
+    .badge-script { background: var(--green); color: #000; }
+    .badge-api { background: var(--yellow); color: #000; }
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 2rem 0;
+    }
+    .toc h3 { margin-top: 0; color: var(--text-muted); font-size: 0.9rem; }
+    .toc ul { margin: 0; padding-left: 1.5rem; }
+    .toc li { margin: 0.5rem 0; }
+    .toc a { color: var(--accent); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .warning {
+      background: rgba(248, 81, 73, 0.1);
+      border-left: 3px solid var(--red);
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+    .tip {
+      background: rgba(63, 185, 80, 0.1);
+      border-left: 3px solid var(--green);
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 0 8px 8px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--text-muted); font-weight: 600; }
+    footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>VM <span>API</span></h1>
+    <p class="subtitle">Human language docs for the exe.dev agent orchestration system</p>
+    
+    <div class="toc">
+      <h3>TABLE OF CONTENTS</h3>
+      <ul>
+        <li><a href="#worker-loops">Worker Loops</a> — autonomous agent sessions</li>
+        <li><a href="#deja-memory">Deja Memory</a> — persistent cross-session memory</li>
+        <li><a href="#session-search">Session Search</a> — search past conversations</li>
+        <li><a href="#context-management">Context Management</a> — control the context window</li>
+        <li><a href="#health-checks">Health Checks</a> — automated build gates</li>
+        <li><a href="#pre-action-critic">Pre-action Critic</a> — catch mistakes before they happen</li>
+        <li><a href="#steerer">Steerer</a> — meta-loop for rescue and coordination</li>
+      </ul>
+    </div>
+
+    <!-- WORKER LOOPS -->
+    <h2 id="worker-loops">Worker Loops <span class="badge badge-script">~/bin/worker</span></h2>
+    
+    <p>Autonomous shelley sessions that run until complete or hitting context limits. The worker script spawns sessions, enforces limits, and manages state.</p>
+    
+    <h3>Start a loop</h3>
+    <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10]</code></pre>
+    
+    <h3>Check running loops</h3>
+    <pre><code>worker list</code></pre>
+    <p>Shows all workers with status, session count, and working directory.</p>
+    
+    <h3>Stop a loop</h3>
+    <pre><code>worker stop &lt;name&gt;       # graceful stop
+worker stop-all          # stop everything</code></pre>
+    
+    <h3>View logs</h3>
+    <pre><code>worker log &lt;name&gt;        # show recent output
+tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
+    
+    <div class="card">
+      <h3>Key behaviors</h3>
+      <table>
+        <tr><th>Feature</th><th>Behavior</th></tr>
+        <tr><td>Context limit</td><td>Stops at 75% context, hands off to next session</td></tr>
+        <tr><td>Directory lock</td><td>Only one worker per directory (prevents conflicts)</td></tr>
+        <tr><td>State file</td><td><code>~/.workers/&lt;name&gt;.json</code></td></tr>
+        <tr><td>Session prompt</td><td>Prefixed with <code>WORKER MODE:</code> + task</td></tr>
+      </table>
+    </div>
+    
+    <div class="tip">
+      <strong>Steering a running loop:</strong> Update deja memories or edit AGENTS.md. The agent queries deja at session start, so new memories steer its direction.
+    </div>
+
+    <!-- DEJA MEMORY -->
+    <h2 id="deja-memory">Deja Memory <span class="badge badge-api">deja.coey.dev</span></h2>
+    
+    <p>Persistent memory that survives across sessions. Agents query deja at session start to get relevant context.</p>
+    
+    <h3>Query for relevant memories</h3>
+    <pre><code>curl -s -X POST https://deja.coey.dev/inject \
+  -H "Content-Type: application/json" \
+  -d '{"context": "describe your task", "format": "prompt", "limit": 5}'</code></pre>
+    <p>Returns learnings relevant to the context. One call per session is enough.</p>
+    
+    <h3>Store a learning</h3>
+    <pre><code>curl -s -X POST https://deja.coey.dev/learn \
+  -H "Authorization: Bearer $(cat ~/.deja-api-key)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trigger": "when this is relevant",
+    "learning": "what to remember",
+    "confidence": 0.9
+  }'</code></pre>
+    
+    <div class="warning">
+      <strong>Don't pollute deja:</strong> Running tests against deja created 48 garbage entries that drowned out 13 real ones. Use unique markers and clean up after tests.
+    </div>
+    
+    <h3>Memory types</h3>
+    <table>
+      <tr><th>Type</th><th>Use for</th></tr>
+      <tr><td>Project state</td><td>Current status, blockers, next steps</td></tr>
+      <tr><td>Learnings</td><td>"When X happens, do Y" patterns</td></tr>
+      <tr><td>Failures</td><td>Things that didn't work (prevent repeats)</td></tr>
+    </table>
+
+    <!-- SESSION SEARCH -->
+    <h2 id="session-search">Session Search <span class="badge badge-script">~/bin/shelley-*</span></h2>
+    
+    <p>52+ past shelley sessions = 157MB of searchable memory. Find what you tried before.</p>
+    
+    <h3>Search past sessions</h3>
+    <pre><code>~/bin/shelley-search "pattern" [limit]</code></pre>
+    <p>Finds conversations mentioning the pattern, shows context snippets.</p>
+    
+    <h3>Get compact context for injection</h3>
+    <pre><code>~/bin/shelley-recall "error message" [limit]</code></pre>
+    <p>Returns HANDOFF notes and relevant snippets, formatted for prompt injection.</p>
+    
+    <div class="tip">
+      <strong>Auto-recall in health checks:</strong> When <code>gates/health.sh</code> finds errors, it auto-searches past sessions and includes relevant context.
+    </div>
+
+    <!-- CONTEXT MANAGEMENT -->
+    <h2 id="context-management">Context Management <span class="badge badge-script">~/bin/ctx</span></h2>
+    
+    <p>Selective editing of the context window. Delete tool outputs you don't need anymore.</p>
+    
+    <h3>Check context size</h3>
+    <pre><code>ctx size &lt;conversation_id&gt;</code></pre>
+    
+    <h3>Search for messages</h3>
+    <pre><code>ctx search &lt;conversation_id&gt; "search term"</code></pre>
+    <p>Returns message IDs matching the term.</p>
+    
+    <h3>Delete messages</h3>
+    <pre><code>ctx forget &lt;msg_id&gt; [msg_id...]</code></pre>
+    
+    <h3>List recent messages</h3>
+    <pre><code>ctx list &lt;conversation_id&gt; [limit]</code></pre>
+    
+    <div class="card">
+      <h3>Workflow: "forget the websocket stuff"</h3>
+      <ol>
+        <li><code>ctx search &lt;conv&gt; "websocket"</code> — find message IDs</li>
+        <li><code>ctx forget id1 id2 id3</code> — delete them</li>
+        <li><code>ctx size &lt;conv&gt;</code> — verify tokens freed</li>
+      </ol>
+    </div>
+
+    <!-- HEALTH CHECKS -->
+    <h2 id="health-checks">Health Checks <span class="badge badge-tool">gates/health.sh</span></h2>
+    
+    <p>Worker loops auto-run <code>gates/health.sh</code> before each session. Output is injected into the prompt.</p>
+    
+    <h3>Create a health check</h3>
+    <pre><code>#!/bin/bash
+# gates/health.sh - exit 0 = healthy, exit 1 = blockers
+
+# Type check
+ERRORS=$(npx tsc --noEmit 2>&1 | grep "error TS" | head -10)
+if [ -n "$ERRORS" ]; then
+  echo "❌ Type errors - FIX FIRST:"
+  echo "$ERRORS"
+  
+  # Auto-recall past attempts at this error
+  FIRST_ERROR=$(echo "$ERRORS" | head -1)
+  ~/bin/shelley-recall "$FIRST_ERROR" 1 2>/dev/null
+  
+  exit 1
+fi
+
+echo "✅ Build passes"
+exit 0</code></pre>
+    
+    <h3>What to check</h3>
+    <table>
+      <tr><th>Check</th><th>Blocking?</th><th>Why</th></tr>
+      <tr><td>Type errors</td><td>Yes</td><td>Don't add features on broken builds</td></tr>
+      <tr><td>Uncommitted changes</td><td>Yes</td><td>Commit before doing more work</td></tr>
+      <tr><td>Explicit <code>any</code></td><td>Yes</td><td>Use specific types</td></tr>
+      <tr><td>TODO markers</td><td>No</td><td>Awareness, not blocking</td></tr>
+      <tr><td>console.log</td><td>No</td><td>Clean up eventually</td></tr>
+    </table>
+
+    <!-- PRE-ACTION CRITIC -->
+    <h2 id="pre-action-critic">Pre-action Critic <span class="badge badge-script">check.mjs</span></h2>
+    
+    <p>Optional sanity check before taking action. Catches red flags before they become problems.</p>
+    
+    <pre><code>node /home/exedev/check.mjs "what you're about to do"</code></pre>
+    
+    <h3>Red flags it catches</h3>
+    <table>
+      <tr><th>Pattern</th><th>Severity</th><th>Why</th></tr>
+      <tr><td>Creating new repo/service</td><td>HIGH</td><td>Can existing be extended?</td></tr>
+      <tr><td>"This should work"</td><td>MEDIUM</td><td>Untested confidence</td></tr>
+      <tr><td>"Clean up later"</td><td>MEDIUM</td><td>Do it now</td></tr>
+      <tr><td>Code before tests</td><td>HIGH</td><td>Write tests first</td></tr>
+      <tr><td>Skipping tests</td><td>HIGH</td><td>Why?</td></tr>
+    </table>
+    
+    <p>Returns <code>PROCEED</code> (exit 0) or <code>STOP</code> (exit 1).</p>
+
+    <!-- STEERER -->
+    <h2 id="steerer">Steerer <span class="badge badge-script">~/bin/steerer</span></h2>
+    
+    <p>Meta-loop that watches a worker. Rescues orphaned work, monitors errors, updates deja.</p>
+    
+    <h3>What it does</h3>
+    <ul>
+      <li><strong>Commits orphans:</strong> If worker session dies with uncommitted changes, steerer commits them</li>
+      <li><strong>Monitors errors:</strong> Runs type check, logs error count</li>
+      <li><strong>Updates deja:</strong> Posts status updates for next session</li>
+    </ul>
+    
+    <pre><code># Run alongside worker (in separate terminal)
+~/bin/steerer</code></pre>
+    
+    <div class="warning">
+      <strong>Important:</strong> Steerer watches <code>/home/exedev/myfilepath-new</code> by default. Edit the script to change the project directory.
+    </div>
+
+    <!-- QUICK REFERENCE -->
+    <h2>Quick Reference</h2>
+    
+    <div class="card">
+      <h3>Start autonomous work</h3>
+      <pre><code># Start a worker loop
+worker start myproject --task "implement feature X" --dir /path/to/project
+
+# Monitor it
+worker list
+worker log myproject
+
+# Steer by updating memory
+curl -X POST https://deja.coey.dev/learn ...</code></pre>
+    </div>
+    
+    <div class="card">
+      <h3>Search past work</h3>
+      <pre><code># What did we try before?
+~/bin/shelley-search "websocket"
+~/bin/shelley-recall "error TS2345"</code></pre>
+    </div>
+    
+    <div class="card">
+      <h3>Free up context</h3>
+      <pre><code># Find and delete old messages
+ctx search CONV_ID "big tool output"
+ctx forget MSG_ID1 MSG_ID2
+ctx size CONV_ID</code></pre>
+    </div>
+
+    <footer>
+      <p>Built on <a href="https://exe.dev" style="color: var(--accent);">exe.dev</a> — VMs for agents</p>
+    </footer>
+  </div>
+
+  <script>
+    // Add copy buttons to code blocks
+    document.querySelectorAll('pre').forEach(pre => {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'copy';
+      btn.onclick = () => {
+        navigator.clipboard.writeText(pre.querySelector('code').textContent);
+        btn.textContent = 'copied!';
+        setTimeout(() => btn.textContent = 'copy', 1500);
+      };
+      pre.appendChild(btn);
+    });
+  </script>
+</body>
+</html>
