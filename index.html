@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VM API - Human Language Docs</title>
+  <title>VM API - exe.dev Agent Orchestration</title>
+  <meta name="description" content="Documentation for the exe.dev agent orchestration system. Worker loops, memory, handoff recovery, and more.">
   <style>
     :root {
       --bg: #0d1117;
@@ -158,25 +159,25 @@
 <body>
   <div class="container">
     <h1>VM <span>API</span></h1>
-    <p class="subtitle">Human language docs for the exe.dev agent orchestration system</p>
+    <p class="subtitle">Documentation for the exe.dev agent orchestration system</p>
     
     <div class="toc">
       <h3>TABLE OF CONTENTS</h3>
       <ul>
-        <li><a href="#worker-loops">Worker Loops</a> — autonomous agent sessions</li>
+        <li><a href="#worker-loops">Worker Loops</a> — autonomous agent sessions with handoff</li>
+        <li><a href="#handoff-recovery">Handoff Recovery</a> — automatic context preservation</li>
         <li><a href="#deja-memory">Deja Memory</a> — persistent cross-session memory</li>
         <li><a href="#session-search">Session Search</a> — search past conversations</li>
         <li><a href="#context-management">Context Management</a> — control the context window</li>
         <li><a href="#health-checks">Health Checks</a> — automated build gates</li>
-        <li><a href="#pre-action-critic">Pre-action Critic</a> — catch mistakes before they happen</li>
-        <li><a href="#steerer">Steerer</a> — meta-loop for rescue and coordination</li>
+        <li><a href="#orchestrator">Orchestrator</a> — lifecycle coordination</li>
       </ul>
     </div>
 
     <!-- WORKER LOOPS -->
     <h2 id="worker-loops">Worker Loops <span class="badge badge-script">~/bin/worker</span></h2>
     
-    <p>Autonomous shelley sessions that run until complete or hitting context limits. The worker script spawns sessions, enforces limits, and manages state.</p>
+    <p>Autonomous agent sessions that run until complete or hitting context limits. Sessions hand off state to the next session automatically.</p>
     
     <h3>Start a loop</h3>
     <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10]</code></pre>
@@ -197,27 +198,64 @@ tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
       <h3>Key behaviors</h3>
       <table>
         <tr><th>Feature</th><th>Behavior</th></tr>
-        <tr><td>Context limit</td><td>Stops at 75% context, hands off to next session</td></tr>
+        <tr><td>Context limit</td><td>Stops at 75% context, extracts handoff, starts next session</td></tr>
+        <tr><td>Handoff extraction</td><td>Queries SQLite for last think blocks, injects into next session</td></tr>
         <tr><td>Directory lock</td><td>Only one worker per directory (prevents conflicts)</td></tr>
         <tr><td>State file</td><td><code>~/.workers/&lt;name&gt;.json</code></td></tr>
-        <tr><td>Session prompt</td><td>Prefixed with <code>WORKER MODE:</code> + task</td></tr>
+        <tr><td>Deja integration</td><td>Queries deja for project memories at session start</td></tr>
       </table>
     </div>
     
     <div class="tip">
-      <strong>Steering a running loop:</strong> Update deja memories or edit AGENTS.md. The agent queries deja at session start, so new memories steer its direction.
+      <strong>Steering a running loop:</strong> Update deja memories. The agent queries deja at each session start, so new memories steer direction.
+    </div>
+
+    <!-- HANDOFF RECOVERY -->
+    <h2 id="handoff-recovery">Handoff Recovery</h2>
+    
+    <p>When a session ends (context limit, interruption, or natural completion), the orchestrator extracts state and injects it into the next session.</p>
+    
+    <h3>How it works</h3>
+    <ol>
+      <li>Session hits context limit or is interrupted</li>
+      <li>Orchestrator cancels the session</li>
+      <li>Orchestrator queries SQLite for last 3 <code>think</code> tool calls</li>
+      <li>Extracts HANDOFF: or DONE: from last text message</li>
+      <li>Injects extracted context into next session prompt</li>
+    </ol>
+    
+    <h3>Handoff types</h3>
+    <table>
+      <tr><th>Type</th><th>Source</th><th>Result</th></tr>
+      <tr><td><code>DONE:</code></td><td>Agent's last message</td><td>Worker marks complete, stops</td></tr>
+      <tr><td><code>HANDOFF:</code></td><td>Agent's last message</td><td>Message injected into next session</td></tr>
+      <tr><td>Interrupted</td><td>Last think blocks</td><td>Thoughts summarized and injected</td></tr>
+    </table>
+    
+    <h3>SQLite extraction</h3>
+    <pre><code># What the orchestrator queries:
+sqlite3 ~/.config/shelley/shelley.db "
+  SELECT json_extract(json(llm_data), '$.Content[0].ToolInput.thoughts')
+  FROM messages 
+  WHERE conversation_id='CONV_ID' 
+    AND json_extract(json(llm_data), '$.Content[0].ToolName') = 'think'
+  ORDER BY sequence_id DESC LIMIT 3
+"</code></pre>
+    
+    <div class="tip">
+      <strong>Best practice:</strong> Use the <code>think</code> tool to record your reasoning. These thoughts are preserved across session boundaries.
     </div>
 
     <!-- DEJA MEMORY -->
     <h2 id="deja-memory">Deja Memory <span class="badge badge-api">deja.coey.dev</span></h2>
     
-    <p>Persistent memory that survives across sessions. Agents query deja at session start to get relevant context.</p>
+    <p>Persistent memory that survives across sessions. Worker loops automatically query deja at session start.</p>
     
     <h3>Query for relevant memories</h3>
     <pre><code>curl -s -X POST https://deja.coey.dev/inject \
   -H "Content-Type: application/json" \
   -d '{"context": "describe your task", "format": "prompt", "limit": 5}'</code></pre>
-    <p>Returns learnings relevant to the context. One call per session is enough.</p>
+    <p>Returns learnings relevant to the context. Worker loops do this automatically.</p>
     
     <h3>Store a learning</h3>
     <pre><code>curl -s -X POST https://deja.coey.dev/learn \
@@ -244,7 +282,7 @@ tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
     <!-- SESSION SEARCH -->
     <h2 id="session-search">Session Search <span class="badge badge-script">~/bin/shelley-*</span></h2>
     
-    <p>52+ past shelley sessions = 157MB of searchable memory. Find what you tried before.</p>
+    <p>Past shelley sessions are searchable. Find what you tried before.</p>
     
     <h3>Search past sessions</h3>
     <pre><code>~/bin/shelley-search "pattern" [limit]</code></pre>
@@ -255,7 +293,7 @@ tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
     <p>Returns HANDOFF notes and relevant snippets, formatted for prompt injection.</p>
     
     <div class="tip">
-      <strong>Auto-recall in health checks:</strong> When <code>gates/health.sh</code> finds errors, it auto-searches past sessions and includes relevant context.
+      <strong>Auto-recall in health checks:</strong> When <code>gates/health.sh</code> finds errors, it can auto-search past sessions and include relevant context.
     </div>
 
     <!-- CONTEXT MANAGEMENT -->
@@ -299,11 +337,6 @@ ERRORS=$(npx tsc --noEmit 2>&1 | grep "error TS" | head -10)
 if [ -n "$ERRORS" ]; then
   echo "❌ Type errors - FIX FIRST:"
   echo "$ERRORS"
-  
-  # Auto-recall past attempts at this error
-  FIRST_ERROR=$(echo "$ERRORS" | head -1)
-  ~/bin/shelley-recall "$FIRST_ERROR" 1 2>/dev/null
-  
   exit 1
 fi
 
@@ -320,42 +353,38 @@ exit 0</code></pre>
       <tr><td>console.log</td><td>No</td><td>Clean up eventually</td></tr>
     </table>
 
-    <!-- PRE-ACTION CRITIC -->
-    <h2 id="pre-action-critic">Pre-action Critic <span class="badge badge-script">check.mjs</span></h2>
+    <!-- ORCHESTRATOR -->
+    <h2 id="orchestrator">Orchestrator</h2>
     
-    <p>Optional sanity check before taking action. Catches red flags before they become problems.</p>
+    <p>The orchestrator coordinates run lifecycle. It does not manage agent reasoning mid-session. It handles boundaries and recovery.</p>
     
-    <pre><code>node /home/exedev/check.mjs "what you're about to do"</code></pre>
-    
-    <h3>Red flags it catches</h3>
-    <table>
-      <tr><th>Pattern</th><th>Severity</th><th>Why</th></tr>
-      <tr><td>Creating new repo/service</td><td>HIGH</td><td>Can existing be extended?</td></tr>
-      <tr><td>"This should work"</td><td>MEDIUM</td><td>Untested confidence</td></tr>
-      <tr><td>"Clean up later"</td><td>MEDIUM</td><td>Do it now</td></tr>
-      <tr><td>Code before tests</td><td>HIGH</td><td>Write tests first</td></tr>
-      <tr><td>Skipping tests</td><td>HIGH</td><td>Why?</td></tr>
-    </table>
-    
-    <p>Returns <code>PROCEED</code> (exit 0) or <code>STOP</code> (exit 1).</p>
-
-    <!-- STEERER -->
-    <h2 id="steerer">Steerer <span class="badge badge-script">~/bin/steerer</span></h2>
-    
-    <p>Meta-loop that watches a worker. Rescues orphaned work, monitors errors, updates deja.</p>
-    
-    <h3>What it does</h3>
+    <h3>Responsibilities</h3>
     <ul>
-      <li><strong>Commits orphans:</strong> If worker session dies with uncommitted changes, steerer commits them</li>
-      <li><strong>Monitors errors:</strong> Runs type check, logs error count</li>
-      <li><strong>Updates deja:</strong> Posts status updates for next session</li>
+      <li><strong>Start/stop runs:</strong> Manages worker lifecycle</li>
+      <li><strong>Enforce limits:</strong> Cancels sessions at 75% context</li>
+      <li><strong>Extract handoffs:</strong> Queries SQLite for think blocks after cancellation</li>
+      <li><strong>Inject context:</strong> Passes handoff + deja memories to next session</li>
+      <li><strong>Track state:</strong> Maintains <code>~/.workers/*.json</code> files</li>
     </ul>
     
-    <pre><code># Run alongside worker (in separate terminal)
-~/bin/steerer</code></pre>
+    <h3>Boundaries</h3>
+    <ul>
+      <li>Does not interpret agent output mid-session</li>
+      <li>Does not modify prompts while agent is working</li>
+      <li>Does not make decisions for agents</li>
+      <li>Observes and coordinates only</li>
+    </ul>
     
-    <div class="warning">
-      <strong>Important:</strong> Steerer watches <code>/home/exedev/myfilepath-new</code> by default. Edit the script to change the project directory.
+    <div class="card">
+      <h3>Orchestrator actions by trigger</h3>
+      <table>
+        <tr><th>Trigger</th><th>Action</th></tr>
+        <tr><td>Context limit reached</td><td>Cancel session, extract handoff, start next</td></tr>
+        <tr><td>Agent outputs <code>DONE:</code></td><td>Mark worker complete, stop</td></tr>
+        <tr><td>Agent outputs <code>HANDOFF:</code></td><td>Extract message, inject into next session</td></tr>
+        <tr><td>Session interrupted</td><td>Extract last think blocks, inject into next session</td></tr>
+        <tr><td>Max sessions reached</td><td>Mark worker as <code>max_reached</code>, stop</td></tr>
+      </table>
     </div>
 
     <!-- QUICK REFERENCE -->
@@ -364,7 +393,7 @@ exit 0</code></pre>
     <div class="card">
       <h3>Start autonomous work</h3>
       <pre><code># Start a worker loop
-worker start myproject --task "implement feature X" --dir /path/to/project
+worker start myproject --task "implement feature X" --dir /path/to/project --max 20
 
 # Monitor it
 worker list
