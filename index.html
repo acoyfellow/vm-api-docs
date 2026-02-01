@@ -182,7 +182,9 @@
     <p>Autonomous agent sessions that run until complete or hitting context limits. Sessions hand off state to the next session automatically.</p>
     
     <h3>Start a loop</h3>
-    <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10]</code></pre>
+    <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10] [--model name]
+
+# Default model: claude-opus-4.5</code></pre>
     
     <h3>Check running loops</h3>
     <pre><code>worker list</code></pre>
@@ -198,10 +200,13 @@ tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
     
     <h3>Adjust running worker</h3>
     <pre><code># Change max sessions on a running worker
-worker adjust &lt;name&gt; --max 50
+worker adjust &lt;name&gt; --max 50 [--model name]
 
-# Example: bump orchestrator from 10 to 50 sessions
-worker adjust orchestrator --max 50</code></pre>
+# Example: bump orchestrator to 50 sessions
+worker adjust orchestrator --max 50
+
+# Example: change model on running worker
+worker adjust orchestrator --model claude-sonnet-4-20250514</code></pre>
     
     <div class="card">
       <h3>Key behaviors</h3>
@@ -211,6 +216,7 @@ worker adjust orchestrator --max 50</code></pre>
         <tr><td>Handoff extraction</td><td>Queries SQLite for last think blocks, injects into next session</td></tr>
         <tr><td>Directory lock</td><td>Only one worker per directory (prevents conflicts)</td></tr>
         <tr><td>State file</td><td><code>~/.workers/&lt;name&gt;.json</code></td></tr>
+        <tr><td>Model selection</td><td>Configurable via <code>--model</code> flag, default: claude-opus-4.5</td></tr>
         <tr><td>Deja integration</td><td>Queries deja for project memories at session start</td></tr>
       </table>
     </div>
