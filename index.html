@@ -169,6 +169,8 @@
         <li><a href="#deja-memory">Deja Memory</a> — persistent cross-session memory</li>
         <li><a href="#session-search">Session Search</a> — search past conversations</li>
         <li><a href="#context-management">Context Management</a> — control the context window</li>
+        <li><a href="#conversation-management">Conversation Management</a> — archive, cancel, status</li>
+        <li><a href="#api-reference">API Reference</a> — HTTP endpoints</li>
         <li><a href="#health-checks">Health Checks</a> — automated build gates</li>
         <li><a href="#orchestrator">Orchestrator</a> — lifecycle coordination</li>
       </ul>
@@ -193,6 +195,13 @@ worker stop-all          # stop everything</code></pre>
     <h3>View logs</h3>
     <pre><code>worker log &lt;name&gt;        # show recent output
 tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
+    
+    <h3>Adjust running worker</h3>
+    <pre><code># Change max sessions on a running worker
+worker adjust &lt;name&gt; --max 50
+
+# Example: bump orchestrator from 10 to 50 sessions
+worker adjust orchestrator --max 50</code></pre>
     
     <div class="card">
       <h3>Key behaviors</h3>
@@ -322,6 +331,66 @@ sqlite3 ~/.config/shelley/shelley.db "
         <li><code>ctx size &lt;conv&gt;</code> — verify tokens freed</li>
       </ol>
     </div>
+
+    <!-- CONVERSATION MANAGEMENT -->
+    <h2 id="conversation-management">Conversation Management <span class="badge badge-script">~/bin/conv</span></h2>
+    
+    <p>Manage conversations programmatically. Archive, cancel, check status.</p>
+    
+    <h3>List conversations</h3>
+    <pre><code># All conversations
+conv list
+
+# Only currently working (actively processing)
+conv list --working</code></pre>
+    
+    <h3>Check status</h3>
+    <pre><code>conv status &lt;id|slug&gt;
+
+# Example output:
+# ID:       cSJ3NR3
+# Slug:     orchestrator
+# Model:    claude-opus-4.5
+# Archived: false
+# Context:  26561 tokens</code></pre>
+    
+    <h3>Archive/Unarchive</h3>
+    <pre><code># Archive a conversation (hides from list)
+conv archive orchestrata
+
+# Bring it back
+conv unarchive orchestrata</code></pre>
+    
+    <h3>Cancel</h3>
+    <pre><code># Stop a running conversation
+conv cancel &lt;id|slug&gt;</code></pre>
+    
+    <div class="tip">
+      <strong>Tip:</strong> Use partial slug matches. <code>conv status orch</code> finds "orchestrator".
+    </div>
+
+    <!-- API REFERENCE -->
+    <h2 id="api-reference">API Reference <span class="badge badge-api">localhost:9999</span></h2>
+    
+    <p>HTTP endpoints for conversation management. All require <code>X-Exedev-Userid</code> header.</p>
+    
+    <table>
+      <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+      <tr><td>GET</td><td><code>/api/conversations</code></td><td>List all conversations (includes <code>working</code> field)</td></tr>
+      <tr><td>GET</td><td><code>/api/conversation/{id}</code></td><td>Get conversation details + <code>context_window_size</code></td></tr>
+      <tr><td>POST</td><td><code>/api/conversation/{id}/archive</code></td><td>Archive a conversation</td></tr>
+      <tr><td>POST</td><td><code>/api/conversation/{id}/unarchive</code></td><td>Unarchive a conversation</td></tr>
+      <tr><td>POST</td><td><code>/api/conversation/{id}/cancel</code></td><td>Cancel a running conversation</td></tr>
+    </table>
+    
+    <h3>Example: Check if conversation is running</h3>
+    <pre><code>curl -s "http://localhost:9999/api/conversations" \
+  -H "X-Exedev-Userid: $USER" | jq '.[] | select(.working == true)'</code></pre>
+    
+    <h3>Example: Get context size</h3>
+    <pre><code>curl -s "http://localhost:9999/api/conversation/cSJ3NR3" \
+  -H "X-Exedev-Userid: $USER" | jq '.context_window_size'
+# 26561</code></pre>
 
     <!-- HEALTH CHECKS -->
     <h2 id="health-checks">Health Checks <span class="badge badge-tool">gates/health.sh</span></h2>
