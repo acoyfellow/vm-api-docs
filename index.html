@@ -412,12 +412,37 @@ fi
 echo "✅ Build passes"
 exit 0</code></pre>
     
+    <h3>Auto-rescue uncommitted work</h3>
+    <p>Sessions can die mid-work (context limit, timeout, crash). Health checks should <strong>rescue</strong> orphaned changes, not just warn:</p>
+    <pre><code># Auto-commit orphaned work at session start
+UNCOMMITTED=$(git status --porcelain | grep -E "^( M|M |\?\?)" | head -10)
+if [ -n "$UNCOMMITTED" ]; then
+  echo "⚠️ Uncommitted work found - auto-committing..."
+  
+  # Stage modified files
+  git status --porcelain | grep -E "^( M|M )" | awk '{print $2}' | xargs -r git add
+  
+  # Stage new code files (not temp files)
+  git status --porcelain | grep -E "^\?\?" | awk '{print $2}' | \
+    grep -E "\.(ts|js|svelte|json|md|sh)$" | xargs -r git add
+  
+  # Commit with rescue message
+  if ! git diff --cached --quiet; then
+    git commit -m "Auto-rescue: uncommitted work from previous session"
+    echo "✅ Committed rescued work"
+  fi
+fi</code></pre>
+    
+    <div class="warning">
+      <strong>Why auto-rescue?</strong> Warnings don't work. Agents hit context limits and die before committing. The next session warns but continues building on uncommitted changes. Auto-rescue breaks this cycle.
+    </div>
+    
     <h3>What to check</h3>
     <table>
       <tr><th>Check</th><th>Blocking?</th><th>Why</th></tr>
+      <tr><td>Uncommitted changes</td><td>Auto-fix</td><td>Rescue orphaned work automatically</td></tr>
       <tr><td>Type errors</td><td>Yes</td><td>Don't add features on broken builds</td></tr>
-      <tr><td>Uncommitted changes</td><td>Yes</td><td>Commit before doing more work</td></tr>
-      <tr><td>Explicit <code>any</code></td><td>Yes</td><td>Use specific types</td></tr>
+      <tr><td>Explicit <code>any</code></td><td>Warning</td><td>Review, but not always blocking</td></tr>
       <tr><td>TODO markers</td><td>No</td><td>Awareness, not blocking</td></tr>
       <tr><td>console.log</td><td>No</td><td>Clean up eventually</td></tr>
     </table>
