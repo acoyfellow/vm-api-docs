@@ -1,0 +1,399 @@
+#!/bin/bash
+# worker - autonomous agent runs with handoff recovery
+#
+# Runs execute until context limit, then hand off to next session.
+# State persists in ~/.workers/. Handoffs extracted from SQLite.
+
+set -euo pipefail
+
+WORKERS_DIR="$HOME/.workers"
+SHELLEY_DB="$HOME/.config/shelley/shelley.db"
+MAX_CONTEXT_PERCENT=75
+MAX_TOKENS=200000
+
+mkdir -p "$WORKERS_DIR"
+
+# --- Core Functions ---
+
+list_workers() {
+  echo "NAME                STATUS      SESSION  DIR"
+  echo "----                ------      -------  ---"
+  for f in "$WORKERS_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    local name status session max dir
+    name=$(jq -r '.name // "?"' "$f")
+    status=$(jq -r '.status // "?"' "$f")
+    session=$(jq -r '.session // 0' "$f")
+    max=$(jq -r '.max_sessions // 10' "$f")
+    dir=$(jq -r '.dir // "?"' "$f")
+    printf "%-18s  %-10s  %s/%s      %s\n" "$name" "$status" "$session" "$max" "$dir"
+  done
+}
+
+check_dir_locked() {
+  local dir="$1" my_name="$2"
+  for f in "$WORKERS_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    local other_name other_dir other_status other_pid
+    other_name=$(jq -r '.name' "$f")
+    [ "$other_name" = "$my_name" ] && continue
+    other_dir=$(jq -r '.dir' "$f")
+    other_status=$(jq -r '.status' "$f")
+    other_pid=$(jq -r '.pid // 0' "$f")
+    if [ "$other_dir" = "$dir" ] && [ "$other_status" = "running" ]; then
+      if kill -0 "$other_pid" 2>/dev/null; then
+        echo "$other_name"
+        return
+      fi
+    fi
+  done
+}
+
+check_context_limit() {
+  local conv_id="$1"
+  local ctx_size
+  ctx_size=$(curl -s -H "X-Exedev-Userid: $USER" \
+    "http://localhost:9999/api/conversation/$conv_id" | jq -r '.context_window_size // 0')
+  local limit=$((MAX_TOKENS * MAX_CONTEXT_PERCENT / 100))
+  if [ "$ctx_size" -gt "$limit" ] 2>/dev/null; then
+    echo "$ctx_size"
+  else
+    echo "0"
+  fi
+}
+
+cancel_conversation() {
+  local conv_id="$1"
+  curl -s -X POST "http://localhost:9999/api/conversation/$conv_id/cancel" \
+    -H "X-Exedev-Userid: $USER" \
+    -H "X-Shelley-Request: 1" > /dev/null 2>&1 || true
+}
+
+# --- Handoff Extraction (SQLite) ---
+
+extract_handoff() {
+  local conv_id="$1"
+  [ ! -f "$SHELLEY_DB" ] && return
+  
+  # Get last 3 think blocks from this conversation
+  local thoughts
+  thoughts=$(sqlite3 "$SHELLEY_DB" "
+    SELECT json_extract(json(llm_data), '\$.Content[0].ToolInput.thoughts')
+    FROM messages 
+    WHERE conversation_id='$conv_id' 
+      AND json_extract(json(llm_data), '\$.Content[0].ToolName') = 'think'
+    ORDER BY sequence_id DESC 
+    LIMIT 3
+  " 2>/dev/null | grep -v '^$' | head -3)
+  
+  # Get last text message (might have HANDOFF: or DONE:)
+  local last_text
+  last_text=$(sqlite3 "$SHELLEY_DB" "
+    SELECT json_extract(json(llm_data), '\$.Content[0].Text')
+    FROM messages 
+    WHERE conversation_id='$conv_id' 
+      AND json_extract(json(llm_data), '\$.Content[0].Type') = 2
+      AND json_extract(json(llm_data), '\$.Content[0].Text') != ''
+    ORDER BY sequence_id DESC 
+    LIMIT 1
+  " 2>/dev/null || echo "")
+  
+  # Check for explicit DONE/HANDOFF
+  if echo "$last_text" | grep -q "DONE:"; then
+    echo "DONE"
+    return
+  fi
+  
+  if echo "$last_text" | grep -q "HANDOFF:"; then
+    echo "$last_text" | grep -o "HANDOFF:.*" | head -1
+    return
+  fi
+  
+  # No explicit handoff - use think blocks as context
+  if [ -n "$thoughts" ]; then
+    echo "INTERRUPTED. Last thoughts: $(echo "$thoughts" | tr '\n' ' ' | cut -c1-500)"
+    return
+  fi
+  
+  echo "NEW"
+}
+
+query_deja() {
+  local task="$1" dir="$2"
+  local context="Project: $dir. Task: $task"
+  local response
+  response=$(curl -s -X POST https://deja.coey.dev/inject \
+    -H "Content-Type: application/json" \
+    -d "{\"context\": \"$context\", \"format\": \"prompt\", \"limit\": 5}" 2>/dev/null || echo "{}")
+  echo "$response" | jq -r '.formatted // ""' 2>/dev/null || echo ""
+}
+
+run_health_check() {
+  local dir="$1"
+  [ -x "$dir/gates/health.sh" ] || return 0
+  cd "$dir" && ./gates/health.sh 2>&1 | head -30
+}
+
+# --- Main Commands ---
+
+cmd_start() {
+  local name="$1"
+  shift
+  local dir task max
+  dir="$(pwd)"
+  task=""
+  max=10
+  model="claude-opus-4.5"
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) dir="$2"; shift 2 ;;
+      --task) task="$2"; shift 2 ;;
+      --max) max="$2"; shift 2 ;;
+      --model) model="$2"; shift 2 ;;
+      *) echo "Unknown: $1"; exit 1 ;;
+    esac
+  done
+  
+  dir=$(cd "$dir" 2>/dev/null && pwd)
+  
+  if [ -z "$name" ] || [ -z "$task" ]; then
+    echo "Usage: worker start <name> --task \"desc\" [--dir path] [--max n] [--model name]"
+    exit 1
+  fi
+  
+  local state_file="$WORKERS_DIR/$name.json"
+  
+  # Check if running
+  if [ -f "$state_file" ]; then
+    local status pid
+    status=$(jq -r '.status' "$state_file")
+    pid=$(jq -r '.pid // 0' "$state_file")
+    if [ "$status" = "running" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "Worker '$name' already running (pid $pid)"
+      exit 1
+    fi
+  fi
+  
+  # Check dir lock
+  local locked_by
+  locked_by=$(check_dir_locked "$dir" "$name")
+  if [ -n "$locked_by" ]; then
+    echo "ERROR: Directory locked by '$locked_by'"
+    exit 1
+  fi
+  
+  # Start background loop
+  (
+    local session=0 conv_id="" last_conv_id=""
+    
+    # Write initial state (no multiline heredoc to avoid escaping issues)
+    echo "{\"name\":\"$name\",\"status\":\"running\",\"pid\":$$,\"dir\":\"$dir\",\"task\":\"$(echo "$task" | sed 's/"/\\"/g')\",\"session\":0,\"max_sessions\":$max,\"model\":\"$model\",\"conv_id\":null,\"last_conv_id\":null,\"started\":\"$(date -Iseconds)\"}" > "$state_file"
+    
+    while [ $session -lt $max ]; do
+      # Check stop signal
+      local status
+      status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "running")
+      if [ "$status" = "stop" ]; then
+        echo "[worker $name] Stop requested"
+        jq '.status = "stopped"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+        exit 0
+      fi
+      
+      session=$((session + 1))
+      jq ".session = $session" "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+      echo "[worker $name] Starting session $session/$max"
+      
+      # Extract handoff from last conversation
+      local handoff="NEW"
+      last_conv_id=$(jq -r '.last_conv_id // ""' "$state_file")
+      if [ -n "$last_conv_id" ] && [ "$last_conv_id" != "null" ]; then
+        handoff=$(extract_handoff "$last_conv_id")
+        echo "[worker $name] Handoff: ${handoff:0:100}..."
+      fi
+      
+      # Check for DONE
+      if [ "$handoff" = "DONE" ]; then
+        echo "[worker $name] Previous session completed!"
+        jq '.status = "complete"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+        exit 0
+      fi
+      
+      # Query deja
+      echo "[worker $name] Querying deja..."
+      local deja_context
+      deja_context=$(query_deja "$task" "$dir")
+      [ -n "$deja_context" ] && echo "[worker $name] Found deja memories"
+      
+      # Run health check
+      local health_output=""
+      if [ -x "$dir/gates/health.sh" ]; then
+        echo "[worker $name] Running health check..."
+        health_output=$(run_health_check "$dir" || true)
+        echo "$health_output" | head -5
+      fi
+      
+      # Build prompt
+      local prompt="WORKER MODE: Task: $task"
+      [ "$handoff" != "NEW" ] && prompt="$prompt\n\nPREVIOUS SESSION: $handoff"
+      [ -n "$deja_context" ] && prompt="$prompt\n\nMEMORY:\n$deja_context"
+      [ -n "$health_output" ] && prompt="$prompt\n\nHEALTH CHECK:\n$health_output"
+      prompt="$prompt\n\nContext limit: ${MAX_CONTEXT_PERCENT}%. End with HANDOFF: or DONE:"
+      
+      # Escape for JSON
+      local prompt_escaped
+      prompt_escaped=$(echo "$prompt" | jq -Rs '.')
+      
+      # Get model from state
+      local model
+      model=$(jq -r '.model // "claude-opus-4.5"' "$state_file")
+      
+      # Start conversation
+      local result
+      result=$(curl -s -X POST "http://localhost:9999/api/conversations/new" \
+        -H "X-Exedev-Userid: $USER" \
+        -H "X-Shelley-Request: 1" \
+        -H "Content-Type: application/json" \
+        -d "{\"message\": $prompt_escaped, \"cwd\": \"$dir\", \"model\": \"$model\"}")
+      
+      echo "[worker $name] Using model: $model"
+      
+      conv_id=$(echo "$result" | jq -r '.conversation_id // ""')
+      
+      if [ -z "$conv_id" ] || [ "$conv_id" = "null" ]; then
+        echo "[worker $name] Failed to create conversation"
+        jq '.status = "error"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+        exit 1
+      fi
+      
+      jq ".conv_id = \"$conv_id\" | .last_conv_id = \"$conv_id\"" "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+      echo "[worker $name] Conversation: $conv_id"
+      
+      # Poll until done or limit
+      while true; do
+        sleep 5
+        
+        # Check stop
+        status=$(jq -r '.status' "$state_file" 2>/dev/null || echo "running")
+        if [ "$status" = "stop" ]; then
+          echo "[worker $name] Stop requested"
+          cancel_conversation "$conv_id"
+          jq '.status = "stopped"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+          exit 0
+        fi
+        
+        # Check context limit
+        local over_limit
+        over_limit=$(check_context_limit "$conv_id")
+        if [ "$over_limit" != "0" ]; then
+          echo "[worker $name] Context limit hit ($over_limit tokens)"
+          cancel_conversation "$conv_id"
+          sleep 2
+          break
+        fi
+        
+        # Check if done
+        local working
+        working=$(curl -s -H "X-Exedev-Userid: $USER" \
+          "http://localhost:9999/api/conversations" | \
+          jq -r ".[] | select(.conversation_id==\"$conv_id\") | .working" 2>/dev/null || echo "true")
+        
+        if [ "$working" = "false" ]; then
+          echo "[worker $name] Session $session complete"
+          break
+        fi
+      done
+      
+      sleep 2
+    done
+    
+    echo "[worker $name] Max sessions reached"
+    jq '.status = "max_reached"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+  ) >> "$WORKERS_DIR/$name.log" 2>&1 &
+  
+  local worker_pid=$!
+  sleep 1
+  
+  [ -f "$state_file" ] && jq ".pid = $worker_pid" "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+  
+  echo "Started worker '$name' (pid $worker_pid)"
+  echo "Log: $WORKERS_DIR/$name.log"
+  echo "Context limit: ${MAX_CONTEXT_PERCENT}%"
+  echo "Directory: $dir"
+}
+
+cmd_stop() {
+  local name="$1"
+  local state_file="$WORKERS_DIR/$name.json"
+  [ ! -f "$state_file" ] && echo "Worker '$name' not found" && exit 1
+  jq '.status = "stop"' "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+  echo "Stop signal sent to '$name'"
+}
+
+cmd_stop_all() {
+  for f in "$WORKERS_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    local status name
+    status=$(jq -r '.status' "$f")
+    name=$(jq -r '.name' "$f")
+    if [ "$status" = "running" ]; then
+      jq '.status = "stop"' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+      echo "Stop signal sent to $name"
+    fi
+  done
+}
+
+cmd_log() {
+  local name="$1"
+  local log_file="$WORKERS_DIR/$name.log"
+  [ ! -f "$log_file" ] && echo "No log for '$name'" && exit 1
+  tail -50 "$log_file"
+}
+
+cmd_adjust() {
+  local name="$1"
+  shift
+  local state_file="$WORKERS_DIR/$name.json"
+  
+  if [ ! -f "$state_file" ]; then
+    echo "Worker '$name' not found"
+    exit 1
+  fi
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max)
+        jq ".max_sessions = $2" "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+        echo "Set max_sessions to $2 for '$name'"
+        shift 2
+        ;;
+      --model)
+        jq ".model = \"$2\"" "$state_file" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file"
+        echo "Set model to $2 for '$name'"
+        shift 2
+        ;;
+      *)
+        echo "Unknown option: $1"
+        exit 1
+        ;;
+    esac
+  done
+}
+
+case "${1:-}" in
+  start) shift; cmd_start "$@" ;;
+  list) list_workers ;;
+  stop) cmd_stop "$2" ;;
+  stop-all) cmd_stop_all ;;
+  adjust) shift; cmd_adjust "$@" ;;
+  log) cmd_log "$2" ;;
+  *)
+    echo "Usage: worker <command> [args]"
+    echo "  start <name> --task \"desc\" [--dir path] [--max n]"
+    echo "  list"
+    echo "  stop <name>"
+    echo "  stop-all"
+    echo "  log <name>"
+    echo "  adjust <name> --max N [--model name]"
+    ;;
+esac

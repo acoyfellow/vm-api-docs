@@ -1,0 +1,43 @@
+#!/bin/bash
+# Search past shelley sessions for a pattern
+# Usage: shelley-search "pattern" [limit]
+
+PATTERN="$1"
+LIMIT="${2:-5}"
+
+if [ -z "$PATTERN" ]; then
+  echo "Usage: shelley-search <pattern> [limit]"
+  echo "Searches agent messages in past conversations"
+  exit 1
+fi
+
+DB="$HOME/.config/shelley/shelley.db"
+
+# Get unique conversations that mention the pattern, with context
+sqlite3 "$DB" "
+SELECT DISTINCT
+  c.conversation_id,
+  c.slug,
+  datetime(c.updated_at, 'localtime') as updated
+FROM messages m
+JOIN conversations c ON c.conversation_id = m.conversation_id
+WHERE m.type = 'agent'
+  AND json_extract(m.llm_data, '\$.Content[0].Text') LIKE '%$PATTERN%'
+ORDER BY c.updated_at DESC
+LIMIT $LIMIT;
+" 2>/dev/null | while IFS='|' read -r conv_id slug updated; do
+  echo "=== $conv_id | $slug | $updated ==="
+  
+  # Get the first matching snippet from this conversation
+  sqlite3 "$DB" "
+  SELECT substr(json_extract(m.llm_data, '\$.Content[0].Text'),
+         max(1, instr(lower(json_extract(m.llm_data, '\$.Content[0].Text')), lower('$PATTERN')) - 100),
+         300)
+  FROM messages m
+  WHERE m.conversation_id = '$conv_id'
+    AND m.type = 'agent'
+    AND json_extract(m.llm_data, '\$.Content[0].Text') LIKE '%$PATTERN%'
+  LIMIT 1;
+  " 2>/dev/null
+  echo ""
+done

@@ -1,0 +1,96 @@
+#!/bin/bash
+# conv - conversation management
+# Usage: conv <command> [args]
+
+set -euo pipefail
+
+API_BASE="http://localhost:9999/api"
+DB="$HOME/.config/shelley/shelley.db"
+
+usage() {
+  echo "Usage: conv <command> [args]"
+  echo "  list [--working]        - list conversations"
+  echo "  status <id|slug>        - show conversation details"
+  echo "  archive <id|slug>       - archive a conversation"
+  echo "  unarchive <id|slug>     - unarchive a conversation"
+  echo "  cancel <id|slug>        - cancel running conversation"
+  exit 1
+}
+
+api() {
+  curl -s "$1" -H "X-Exedev-Userid: $USER" -H "X-Shelley-Request: 1" "${@:2}"
+}
+
+# Resolve slug to conversation_id
+resolve_id() {
+  local input="$1"
+  if [[ "$input" =~ ^c[A-Za-z0-9]{6,}$ ]]; then
+    echo "$input"
+    return
+  fi
+  local id
+  id=$(sqlite3 "$DB" "SELECT conversation_id FROM conversations WHERE slug = '$input' OR slug LIKE '%$input%' ORDER BY updated_at DESC LIMIT 1" 2>/dev/null)
+  if [ -z "$id" ]; then
+    echo "ERROR: No conversation found matching '$input'" >&2
+    exit 1
+  fi
+  echo "$id"
+}
+
+cmd_list() {
+  local data
+  data=$(api "${API_BASE}/conversations")
+  
+  if [ "${1:-}" = "--working" ]; then
+    data=$(echo "$data" | jq '[.[] | select(.working == true)]')
+  fi
+  
+  echo "$data" | jq -r '
+    ["ID", "SLUG", "WORKING", "ARCHIVED", "UPDATED"],
+    ["--", "----", "-------", "--------", "-------"],
+    (.[] | [.conversation_id, (.slug // "-")[:30], (if .working then "●" else "" end), (if .archived then "yes" else "" end), .updated_at[:16]]) | @tsv
+  ' | column -t
+}
+
+cmd_status() {
+  local id
+  id=$(resolve_id "$1")
+  
+  local data
+  data=$(api "${API_BASE}/conversation/$id")
+  
+  local ctx_size
+  ctx_size=$(echo "$data" | jq -r '.context_window_size')
+  
+  echo "$data" | jq -r '.conversation | "ID:       \(.conversation_id)\nSlug:     \(.slug // "-")\nModel:    \(.model // "-")\nArchived: \(.archived)\nCreated:  \(.created_at)\nUpdated:  \(.updated_at)"'
+  echo "Context:  $ctx_size tokens"
+}
+
+cmd_archive() {
+  local id
+  id=$(resolve_id "$1")
+  api "${API_BASE}/conversation/$id/archive" -X POST | jq -r '"Archived: \(.slug // .conversation_id)"'
+}
+
+cmd_unarchive() {
+  local id
+  id=$(resolve_id "$1")
+  api "${API_BASE}/conversation/$id/unarchive" -X POST | jq -r '"Unarchived: \(.slug // .conversation_id)"'
+}
+
+cmd_cancel() {
+  local id
+  id=$(resolve_id "$1")
+  api "${API_BASE}/conversation/$id/cancel" -X POST | jq -r '"Cancelled: \(.status)"'
+}
+
+[ $# -lt 1 ] && usage
+
+case "$1" in
+  list) shift; cmd_list "$@" ;;
+  status) shift; [ $# -lt 1 ] && usage; cmd_status "$1" ;;
+  archive) shift; [ $# -lt 1 ] && usage; cmd_archive "$1" ;;
+  unarchive) shift; [ $# -lt 1 ] && usage; cmd_unarchive "$1" ;;
+  cancel) shift; [ $# -lt 1 ] && usage; cmd_cancel "$1" ;;
+  *) usage ;;
+esac

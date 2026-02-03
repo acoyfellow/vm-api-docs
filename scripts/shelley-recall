@@ -1,0 +1,62 @@
+#!/bin/bash
+# Recall relevant past sessions for a given context/error
+# Usage: shelley-recall "error or topic" [limit]
+# Outputs compact summary for injection into prompts
+
+QUERY="$1"
+LIMIT="${2:-3}"
+
+if [ -z "$QUERY" ]; then
+  echo "Usage: shelley-recall <query> [limit]"
+  exit 1
+fi
+
+DB="$HOME/.config/shelley/shelley.db"
+
+# Find conversations mentioning this, extract HANDOFF/key insights
+RESULTS=$(sqlite3 "$DB" "
+SELECT DISTINCT c.conversation_id, c.slug
+FROM messages m
+JOIN conversations c ON c.conversation_id = m.conversation_id
+WHERE m.type = 'agent'
+  AND json_extract(m.llm_data, '\$.Content[0].Text') LIKE '%$QUERY%'
+ORDER BY c.updated_at DESC
+LIMIT $LIMIT;
+" 2>/dev/null)
+
+if [ -z "$RESULTS" ]; then
+  exit 0  # No results, silent
+fi
+
+echo "📚 PAST SESSION CONTEXT for '$QUERY':"
+echo "$RESULTS" | while IFS='|' read -r conv_id slug; do
+  # Try to find a HANDOFF or solution
+  HANDOFF=$(sqlite3 "$DB" "
+  SELECT substr(json_extract(m.llm_data, '\$.Content[0].Text'),
+         instr(json_extract(m.llm_data, '\$.Content[0].Text'), 'HANDOFF:'),
+         200)
+  FROM messages m
+  WHERE m.conversation_id = '$conv_id'
+    AND m.type = 'agent'
+    AND json_extract(m.llm_data, '\$.Content[0].Text') LIKE '%HANDOFF:%'
+  LIMIT 1;
+  " 2>/dev/null)
+  
+  if [ -n "$HANDOFF" ]; then
+    echo "- [$slug] $HANDOFF"
+  else
+    # Just show a relevant snippet
+    SNIPPET=$(sqlite3 "$DB" "
+    SELECT substr(json_extract(m.llm_data, '\$.Content[0].Text'),
+           max(1, instr(lower(json_extract(m.llm_data, '\$.Content[0].Text')), lower('$QUERY')) - 50),
+           150)
+    FROM messages m
+    WHERE m.conversation_id = '$conv_id'
+      AND m.type = 'agent'
+      AND json_extract(m.llm_data, '\$.Content[0].Text') LIKE '%$QUERY%'
+    LIMIT 1;
+    " 2>/dev/null)
+    echo "- [$slug] ...$SNIPPET..."
+  fi
+done
+echo ""

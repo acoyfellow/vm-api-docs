@@ -1,0 +1,48 @@
+#!/bin/bash
+# ctx - shelley context management
+DB=$HOME/.config/shelley/shelley.db
+
+case "$1" in
+  search)
+    conv_id="$2"
+    pattern="$3"
+    sqlite3 -separator ' | ' "$DB" "
+      SELECT message_id, type, substr(json_extract(llm_data, '\$.Content[0].Text'), 1, 80)
+      FROM messages 
+      WHERE conversation_id='$conv_id' AND llm_data LIKE '%$pattern%'
+      ORDER BY sequence_id;"
+    ;;
+    
+  forget)
+    shift
+    for msg_id in "$@"; do
+      sqlite3 "$DB" "DELETE FROM messages WHERE message_id = '$msg_id';"
+      echo "deleted: $msg_id"
+    done
+    ;;
+    
+  list)
+    conv_id="$2"
+    limit="${3:-20}"
+    sqlite3 -separator ' | ' "$DB" "
+      SELECT message_id, sequence_id, type, substr(json_extract(llm_data, '\$.Content[0].Text'), 1, 60)
+      FROM messages 
+      WHERE conversation_id='$conv_id'
+      ORDER BY sequence_id DESC
+      LIMIT $limit;"
+    ;;
+    
+  size)
+    conv_id="$2"
+    curl -s -H "X-Exedev-Userid: $USER" "http://localhost:9999/api/conversation/$conv_id" | \
+      jq -r '"tokens: \(.context_window_size) / 200000 (\(.context_window_size * 100 / 200000)%)"'
+    ;;
+    
+  *)
+    echo "Usage: ctx <command> [args]"
+    echo "  search <conv_id> <text>  - find messages containing text"
+    echo "  forget <msg_id>...       - delete messages"
+    echo "  list <conv_id> [limit]   - list recent messages"  
+    echo "  size <conv_id>           - show context size"
+    ;;
+esac
