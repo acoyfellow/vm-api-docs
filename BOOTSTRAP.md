@@ -9,7 +9,7 @@ Copy and paste this entire prompt to set up the worker loop system on a new exe.
 ```
 I need you to set up the exe.dev worker loop system on this VM. Run this command:
 
-curl -fsSL https://vm-api-docs.coey.dev/install.sh | bash
+curl -fsSL https://vm-api-docs.pages.dev/install.sh | bash
 
 Then add ~/bin to your PATH if needed.
 
@@ -29,7 +29,7 @@ worker list
 To start autonomous work:
 worker start myproject --task "implement feature X" --dir /path/to/project --max 10
 
-Read the full docs: https://vm-api-docs.coey.dev
+Read the full docs: https://vm-api-docs.pages.dev
 ```
 
 ---

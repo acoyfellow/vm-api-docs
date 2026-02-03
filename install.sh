@@ -2,12 +2,12 @@
 # exe.dev VM API Tools Installer
 # Installs worker loops, context management, and session search tools
 #
-# Usage: curl -fsSL https://vm-api-docs.coey.dev/install.sh | bash
+# Usage: curl -fsSL https://vm-api-docs.pages.dev/install.sh | bash
 
 set -euo pipefail
 
 BIN_DIR="$HOME/bin"
-BASE_URL="https://vm-api-docs.coey.dev/scripts"
+BASE_URL="https://vm-api-docs.pages.dev/scripts"
 
 echo "Installing exe.dev VM API tools..."
 echo ""
@@ -45,4 +45,4 @@ echo "  worker start mywork --task 'build feature X' --dir /path/to/project"
 echo "  worker list"
 echo "  worker log mywork"
 echo ""
-echo "Docs: https://vm-api-docs.coey.dev"
+echo "Docs: https://vm-api-docs.pages.dev"
