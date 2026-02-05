@@ -19,6 +19,12 @@ After installation, you'll have these tools:
 - conv - conversation management
 - shelley-search - search past sessions
 - shelley-recall - get context for errors
+- secrets-guard - prevent accidental secret commits
+
+IMPORTANT: Set up secrets guard immediately:
+  secrets-guard install
+  secrets-guard add 'your@email\.com'
+  secrets-guard add 'your-api-key-prefix'
 
 The worker loop system lets you run autonomous tasks that survive context limits.
 When you hit 75% context, the orchestrator extracts your last thoughts and hands off to a new session.
@@ -43,6 +49,7 @@ Read the full docs: https://vm-api-docs.pages.dev
 | `conv` | List/archive/cancel conversations |
 | `shelley-search` | Find past sessions by keyword |
 | `shelley-recall` | Get relevant past context for errors |
+| `secrets-guard` | Global git hook to block secret commits |
 
 ---
 
@@ -57,6 +64,8 @@ Read the full docs: https://vm-api-docs.pages.dev
 **Best practice**: Use the `think` tool frequently. Your thoughts are preserved across session boundaries.
 
 **Health checks**: If `gates/health.sh` exists in your project, it runs at session start. Use it for build gates.
+
+**Secrets guard**: Always run `secrets-guard install` on new VMs. Add patterns for your emails, API keys, and sensitive IDs.
 
 ---
 
@@ -82,4 +91,10 @@ ctx forget MSG_ID1 MSG_ID2
 # Search past work
 shelley-search "websocket"
 shelley-recall "error TS2345"
+
+# Secrets guard
+secrets-guard install
+secrets-guard add 'pattern'
+secrets-guard list
+secrets-guard scan ~/repo
 ```

@@ -1,6 +1,6 @@
 #!/bin/bash
 # exe.dev VM API Tools Installer
-# Installs worker loops, context management, and session search tools
+# Installs worker loops, context management, session search, and secrets guard
 #
 # Usage: curl -fsSL https://vm-api-docs.pages.dev/install.sh | bash
 
@@ -16,7 +16,7 @@ echo ""
 mkdir -p "$BIN_DIR"
 
 # Download scripts
-SCRIPTS=(worker ctx conv shelley-search shelley-recall)
+SCRIPTS=(worker ctx conv shelley-search shelley-recall secrets-guard)
 
 for script in "${SCRIPTS[@]}"; do
   echo "  Installing $script..."
@@ -44,5 +44,9 @@ echo "Quick start:"
 echo "  worker start mywork --task 'build feature X' --dir /path/to/project"
 echo "  worker list"
 echo "  worker log mywork"
+echo ""
+echo "🔒 Set up secrets guard (recommended):"
+echo "  secrets-guard install"
+echo "  secrets-guard add 'your@email\\.com'"
 echo ""
 echo "Docs: https://vm-api-docs.pages.dev"
