@@ -194,9 +194,10 @@ Then run: worker list</code></pre>
     <p>Autonomous agent sessions that run until complete or hitting context limits. Sessions hand off state to the next session automatically.</p>
     
     <h3>Start a loop</h3>
-    <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10] [--model name]
+    <pre><code>worker start &lt;name&gt; --task "description of work" --dir /path/to/project [--max 10] [--model name] [--ping 60]
 
-# Default model: claude-opus-4.5</code></pre>
+# Default model: claude-opus-4.6
+# Default ping: 60s (set --ping 0 to disable)</code></pre>
     
     <h3>Check running loops</h3>
     <pre><code>worker list</code></pre>
@@ -209,6 +210,40 @@ worker stop-all          # stop everything</code></pre>
     <h3>View logs</h3>
     <pre><code>worker log &lt;name&gt;        # show recent output
 tail -f ~/.workers/&lt;name&gt;.log  # live tail</code></pre>
+
+    <h3>Monitor with pings</h3>
+    <p>Workers emit structured pings every N seconds (default: 60s) with context usage, commit activity, and anomaly detection.</p>
+    <pre><code>worker ping &lt;name&gt;       # show last 20 pings
+worker ping &lt;name&gt; 50    # show last 50 pings
+worker watch &lt;name&gt;      # live tail (Ctrl+C to stop)</code></pre>
+    <p>Example ping output:</p>
+    <pre><code>=== my-worker | running | session 3/10 | since 2026-02-07T16:17:44+00:00 ===
+
+[16:18:30] 🚀 START   | task: implement feature X | ping:60s
+[16:19:31] ✅ ACTIVE  | s1/10 ctx:23% +2commits [feat: add login page]
+[16:20:32] ✅ ACTIVE  | s1/10 ctx:45% +1commits [fix: auth redirect]
+[16:21:05] 🟡 CTX-FULL | 162000 tokens, cycling session
+[16:21:07] ✅ SESSION-END | s1 done | commits: feat: add login page
+[16:21:10] 📋 SESSION | starting 2/10
+[16:22:12] ⚠️  ERRORS  | s2/10 ctx:31% errors:4
+[16:30:00] 🏁 DONE    | task complete!</code></pre>
+    <div class="card">
+      <h3>Ping events</h3>
+      <table>
+        <tr><th>Event</th><th>Meaning</th></tr>
+        <tr><td>🚀 START</td><td>Worker started</td></tr>
+        <tr><td>✅ ACTIVE</td><td>Periodic ping — commits detected</td></tr>
+        <tr><td>📋 SESSION</td><td>New session starting</td></tr>
+        <tr><td>✅ SESSION-END</td><td>Session completed normally</td></tr>
+        <tr><td>🟡 CTX-HIGH</td><td>Context window &gt;70%</td></tr>
+        <tr><td>🟡 CTX-FULL</td><td>Context limit hit, cycling</td></tr>
+        <tr><td>⚠️ ERRORS</td><td>Error patterns detected in logs</td></tr>
+        <tr><td>❌ ERROR</td><td>Worker hit a fatal error</td></tr>
+        <tr><td>🏁 DONE</td><td>Task completed successfully</td></tr>
+        <tr><td>🏁 MAX-REACHED</td><td>Hit max session limit</td></tr>
+        <tr><td>🛑 STOP</td><td>Worker stopping</td></tr>
+      </table>
+    </div>
     
     <h3>Adjust running worker</h3>
     <pre><code># Change max sessions on a running worker
@@ -228,7 +263,10 @@ worker adjust orchestrator --model claude-sonnet-4-20250514</code></pre>
         <tr><td>Handoff extraction</td><td>Queries SQLite for last think blocks, injects into next session</td></tr>
         <tr><td>Directory lock</td><td>Only one worker per directory (prevents conflicts)</td></tr>
         <tr><td>State file</td><td><code>~/.workers/&lt;name&gt;.json</code></td></tr>
-        <tr><td>Model selection</td><td>Configurable via <code>--model</code> flag, default: claude-opus-4.5</td></tr>
+        <tr><td>Ping log</td><td><code>~/.workers/&lt;name&gt;.ping.log</code> (last 200 entries)</td></tr>
+        <tr><td>Model selection</td><td>Configurable via <code>--model</code> flag, default: claude-opus-4.6</td></tr>
+        <tr><td>Ping interval</td><td>Configurable via <code>--ping</code> flag, default: 60s</td></tr>
+        <tr><td>Anomaly detection</td><td>Flags error spikes, high context usage, commit activity</td></tr>
         <tr><td>Deja integration</td><td>Queries deja for project memories at session start</td></tr>
       </table>
     </div>
